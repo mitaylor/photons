@@ -11,6 +11,7 @@ RLDFLAGS  := -lEG -lTMVA -lUnfold
 BINDIR = ./bin
 BLDDIR = ./build
 SRCDIR = ./src
+TSTDIR = ./test
 
 RPPSRCS = $(wildcard $(SRCDIR)/*.C)
 RPPEXES = $(patsubst $(SRCDIR)/%.C,$(BINDIR)/%,$(RPPSRCS))
@@ -20,12 +21,16 @@ CPPSRCS = $(wildcard $(SRCDIR)/*.cpp)
 CPPEXES = $(patsubst $(SRCDIR)/%.cpp,$(BINDIR)/%,$(CPPSRCS))
 CPPDEPS = $(patsubst $(SRCDIR)/%.cpp,$(BLDDIR)/%.d,$(CPPSRCS))
 
-EXES = $(RPPEXES) $(CPPEXES)
-DEPS = $(RPPDEPS) $(CPPDEPS)
+TSTSRCS = $(wildcard $(TSTDIR)/*.C)
+TSTEXES = $(patsubst $(TSTDIR)/%.C,$(BINDIR)/%,$(TSTSRCS))
+TSTDEPS = $(patsubst $(TSTDIR)/%.C,$(BLDDIR)/%.d,$(TSTSRCS))
+
+EXES = $(RPPEXES) $(CPPEXES) $(TSTEXES)
+DEPS = $(RPPDEPS) $(CPPDEPS) $(TSTDEPS)
 
 .PHONY: all submodules clean
 
-all: $(RPPEXES) $(CPPEXES)
+all: $(RPPEXES) $(CPPEXES) $(TSTEXES)
 
 submodules:
 	$(MAKE) -C ./git/config
@@ -45,6 +50,12 @@ $(BINDIR)/%: $(SRCDIR)/%.cpp
 	@mkdir -p $(BLDDIR)/$(@D)
 	$(CXX) $(CXXFLAGS) -MMD -MF $(BLDDIR)/$(*F).d $< -o $@ \
 		$(LDFLAGS)
+
+$(BINDIR)/%: $(TSTDIR)/%.C
+	@mkdir -p $(BINDIR)
+	@mkdir -p $(BLDDIR)
+	$(CXX) $(CXXFLAGS) $(RCXXFLAGS) -MMD -MF $(BLDDIR)/$(*F).d $< -o $@ \
+		$(LDFLAGS) $(RLDFLAGS)
 
 clean:
 	@$(RM) $(EXES) $(DEPS)
