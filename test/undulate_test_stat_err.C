@@ -18,7 +18,7 @@
 #include "TH2.h"
 #include "TSpline.h"
 #include "TVectorT.h"
-
+#include "TRandom3.h"
 #include "TUnfoldBinning.h"
 #include "TUnfoldDensity.h"
 
@@ -45,7 +45,7 @@ TH2F* variance(TH1* flat, multival const* m) {
     return cov;
 }
 
-// written by Molly
+/*
 void printVariance(TH1* flat, multival const* m, int64_t c, std::vector<int32_t> const& dcent) {
     auto shape = m->shape();
     printf("Statistical uncertainty for centrality %d to %d", dcent[c+1], dcent[c]);
@@ -55,11 +55,43 @@ void printVariance(TH1* flat, multival const* m, int64_t c, std::vector<int32_t>
 
         if(indices[0] == 0) { printf("\n"); }
 
-        printf("%.6f\t", flat->GetBinError(i + 1));
+        printf("%.5f ", flat->GetBinError(i + 1));
     }
 
     printf("\n");
 }
+*/
+
+void printValues(TH1* flat, multival const* m) {
+    auto shape = m->shape();
+    printf("Histgram values");
+
+    for (int64_t i = 0; i < m->size(); ++i) {
+        auto indices = m->indices_for(i);
+
+        if(indices[0] == 0) { printf("\n"); }
+
+        printf("%.5f ", flat->GetBinContent(i + 1));
+    }
+
+    printf("\n");
+}
+
+
+// create variations of histogram flat according to the statistical errors
+TH1F* vary(TH1* flat) {
+    auto name = std::string(flat->GetName()) + "_variation";
+    auto hnew = (TH1F*)flat->Clone(name.c_str());
+
+    for (int64_t i = 0; i < flat->GetNbinsX(); ++i) {
+        auto r = new TRandom3(0);
+        auto change = r->Gaus(0,flat->GetBinError(i + 1));
+        hnew->SetBinContent(i + 1, flat->GetBinContent(i + 1) + change);
+        hnew->SetBinError(i+1, flat->GetBinError(i+1));
+    }
+
+    return hnew;
+} 
 
 template <std::size_t N>
 TH1F* fold(TH1* flat, TH2* covariance, multival const* m, int64_t axis,
@@ -329,6 +361,20 @@ int undulate(char const* config, char const* output) {
     std::array<int64_t, 4> osg = { 0, 0, 2, 1 };
     std::array<int64_t, 4> osr = { 0, 0, 0, 0 };
 
+    /* data structures to hold varied histograms */
+    auto variations = 500;
+    auto vshape = shape;
+    vshape.push_back(variations);
+
+    auto vfactory = [&](int64_t i, std::string const&, std::string const&) -> TH1F* {
+        return vary((*victims)[i%victims->size()]);
+    };
+
+    auto vvictims = new history<TH1F>("varied_victims"s, "", vfactory, vshape);
+    auto vresults = new history<TH1>("varied_results"s, "", null<TH1>, vshape);
+    auto vfold0 = new history<TH1F>("varied_fold0"s, "", null<TH1F>, vshape);
+    auto vfold1 = new history<TH1F>("varied_fold1"s, "", null<TH1F>, vshape);
+
     /* info text */
     std::function<void(int64_t, float)> pt_info = [&](int64_t x, float pos) {
         info_text(x, pos, "%.0f < p_{T}^{#gamma} < %.0f", dpt, false); };
@@ -445,8 +491,28 @@ int undulate(char const* config, char const* output) {
         (*side0)[i] = fold((*victims)[i], nullptr, mr, 0, osr);
         (*side1)[i] = fold((*victims)[i], nullptr, mr, 1, osr);
 
-        /* input uncertainties */
-        printVariance((*victims)[i], mr, i, dcent);
+        /* test variation */
+        auto tau = u->GetTau();
+
+        for (int64_t j = 0; j < variations; ++j) {
+            printf("%lu, %lu\n", i, j);
+
+            std::vector<int64_t> indices { i, j };
+            pattern<TUnfold::ERegMode::kRegModeCurvature>(u, mg);
+            u->DoUnfold(tau, (*vvictims)[indices], scale[i]);
+
+            printf("unfolded successfully\n");
+
+            (*vresults)[indices] = u->GetOutput(nullptr);
+
+            printf("results obtained successfully\n");
+
+            (*vfold0)[indices] = fold((*vresults)[indices], (*error)[i], mg, 0, osg);
+            (*vfold0)[indices]->Scale(1. / (*vfold0)[indices]->Integral("width"));
+            (*vfold1)[indices] = fold((*vresults)[indices], (*error)[i], mg, 1, osg);
+
+            printf("folds obtained successfully\n");
+        }
 
         /* normalise to unity */
         (*fold0)[i]->Scale(1. / (*fold0)[i]->Integral("width"));
@@ -531,6 +597,11 @@ int undulate(char const* config, char const* output) {
         refold->saveby(tag);
         fold0->saveby(tag);
         fold1->saveby(tag);
+
+        vresults->saveas();
+        vvictims->saveas();
+        vfold0->saveas();
+        vfold1->saveas();
     });
 
     return 0;
